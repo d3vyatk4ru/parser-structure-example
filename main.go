@@ -1,99 +1,88 @@
 package main
 
 import (
-	"encoding/json"
+	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"net/url"
+	"os"
+
+	web "parser/internal/web"
 )
 
-const APIKEY = "a6cc01f8b7350c685d5afe22c3b63a04"
+var (
+	l         *os.File
+	logger    *log.Logger
+	FILE_NAME = "logger"
+)
 
-func CreateURL(
+func init() {
+
+	locall, err := os.OpenFile(FILE_NAME+".log", os.O_RDWR|os.O_CREATE, 0666)
+
+	if err != nil {
+		fmt.Printf("Error: %s", err.Error())
+		os.Exit(1)
+	}
+
+	localLogger := log.New(locall, "[WEATHER PARSE]: ", log.Lshortfile|log.LstdFlags)
+
+	// иначе перекрывает видимость
+	l = locall
+	logger = localLogger
+}
+
+func GenerateData(
+	latStart int,
+	latStop int,
+	lonStart int,
+	lonStop int,
 	domain string,
-	resource string,
-	lat float32,
-	lon float32,
-	apikey string,
-) (string, error) {
+	path string,
+	APIKEY string,
+) error {
+	for lat := latStart; lat <= latStop; lat++ {
+		for lon := lonStart; lon <= lonStop; lon++ {
+			URL, err := web.CreateURL(domain, path, float32(lat), float32(lon), APIKEY)
 
-	params := url.Values{}
-	params.Add("lat", fmt.Sprintf("%v", lat))
-	params.Add("lon", fmt.Sprintf("%v", lon))
-	params.Add("APPID", apikey)
+			logger.Println(URL)
 
-	u, err := url.ParseRequestURI(domain)
+			if err != nil {
+				return err
+			}
 
-	if err != nil {
-		return "", err
+			body, err := web.RequestToWeather(URL)
+
+			if err != nil {
+				return err
+			}
+
+			data, err := web.UnmarshalWeatherJSON(body)
+
+			if err != nil {
+				return err
+			}
+
+			logger.Println(data)
+
+			//TODO: write to json
+		}
 	}
 
-	u.Path = resource
-	u.RawQuery = params.Encode()
+	return nil
 
-	log.Println(u.String())
-
-	return u.String(), nil
-}
-
-func RequestToWeather(URL string) ([]byte, error) {
-
-	resp, err := http.Get(URL)
-
-	if err != nil {
-		return []byte{}, err
-	}
-
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return []byte{}, err
-	}
-
-	return body, nil
-}
-
-func UnmarshalWeatherJSON(body []byte) (NeccesaryWeather, error) {
-
-	jsonData := JsonStructureParse{}
-
-	err := json.Unmarshal(body, &jsonData)
-
-	if err != nil {
-		return NeccesaryWeather{}, err
-	}
-
-	return NeccesaryWeather{
-		Country:     jsonData.Sys.Country,
-		Name:        jsonData.Name,
-		Temperature: jsonData.Main.Temperature,
-		Description: jsonData.Weather[0].Description,
-	}, nil
 }
 
 func main() {
 
-	URL, err := CreateURL("https://api.openweathermap.org", "/data/2.5/weather", 10, 5, APIKEY)
+	defer l.Close()
+
+	APIKEY := os.Getenv("APIKEY")
+	domain := flag.String("domain", "https://api.openweathermap.org", "Site for parsing")
+	path := flag.String("path", "/data/2.5/weather", "Path to data o nweb resource")
+
+	err := GenerateData(0, 360, 0, 360, *domain, *path, APIKEY)
 
 	if err != nil {
-		log.Printf("Error: %s\n", err.Error())
+		logger.Printf("Error: %s\n", err.Error())
 	}
-
-	body, err := RequestToWeather(URL)
-
-	if err != nil {
-		log.Printf("Error: %s\n", err.Error())
-	}
-
-	data, err := UnmarshalWeatherJSON(body)
-
-	if err != nil {
-		log.Printf("Error: %s\n", err.Error())
-	}
-
-	log.Println(data)
 }
